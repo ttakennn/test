@@ -1,0 +1,376 @@
+version: '2'
+networks:
+  nac_network:
+    external: true
+services:
+    fluentd:
+        image: 135.249.45.113:9003/fnms-fluent:nokia-1.0.27
+        container_name: fnms-fluentd
+        restart: always
+        ports:
+            - "24224:24224"
+        environment:
+            - ES_IP=elasticsearch
+            - ES_PORT=9200
+            - OPENTSDB_URL=http://192.168.95.168:4242
+            - KIBANA_VERSION=5.2.1
+        links:
+            - elasticsearch
+            - opentsdb
+        depends_on:
+            - elasticsearch
+            - opentsdb
+        networks:
+            - nac_network
+
+    elasticsearch:
+        image: 135.249.45.113:9003/elasticsearch:5.2.2
+        container_name: elasticsearch
+        restart: always
+        ports:
+            - "9200:9200"
+        networks:
+            - nac_network
+
+    kibana:
+        image: 135.249.45.113:9003/kibana:5.2.2
+        container_name: anv-kibana
+        restart: always
+        ports:
+            - "5601:5601"
+        environment:
+            - ELASTICSEARCH_URL=http://elasticsearch:9200
+        depends_on:
+            - elasticsearch
+        networks:
+            - nac_network
+
+    db:
+        image: 10.74.65.35:9000/fnms-mariadb:nokia-1.0.41
+        container_name: fnms-mariadb
+        restart: always
+        ports:
+            - "3308:3306"
+        volumes:
+            - /home/ttronganh/mysql:/mariadb/data
+        environment:
+            - TERM=vt100
+        networks:
+            - nac_network
+        stdin_open: true
+        tty: true
+        logging:
+            driver: fluentd
+            options:
+                fluentd-address: "0.0.0.0:24224"
+                tag: "docker.{{.ID}}"
+        depends_on:
+            - fluentd
+
+    opentsdb:
+        image: 135.249.45.113:9003/fnms-opentsdb:nokia-1.0.27
+        container_name: fnms-opentsdb
+        restart: always
+        ports:
+            - "4242:4242"
+            - "60030:60030"
+        stdin_open: true
+        tty: true
+        networks:
+            - nac_network
+
+    kafka:
+        image: 135.249.45.113:9000/ckaf-kafka:17.6-20171018093108
+        container_name: kafka
+        restart: always
+        environment:
+            - KAFKA_ZOOKEEPER_CONNECT=192.168.95.168:2181
+            - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://192.168.95.168:9092
+        ports:
+            - "9092:9092"
+        networks:
+            - nac_network
+        stdin_open: true
+        tty: true
+        logging:
+            driver: fluentd
+            options:
+                fluentd-address: "0.0.0.0:24224"
+                tag: "docker.{{.ID}}"
+        depends_on:
+            - fluentd
+
+    zookeeper:
+        image: 135.249.45.113:9000/ckaf-zookeeper:17.6-20171018093108
+        container_name: zookeeper
+        restart: always
+        environment:
+            - ZOOKEEPER_CLIENT_PORT=2181
+            - ZOOKEEPER_MAX_CLIENT_CNXNS=400
+        ports:
+            - "2181:2181"
+        networks:
+            - nac_network
+        stdin_open: true
+        tty: true
+        logging:
+            driver: fluentd
+            options:
+                fluentd-address: "0.0.0.0:24224"
+                tag: "docker.{{.ID}}"
+        depends_on:
+            - fluentd
+
+    syncope:
+        image: 135.249.45.113:9000/fnms-syncope:nokia-1.0.40
+        container_name: fnms-syncope
+        restart: always
+        ports:
+            - "9080:9080"
+        environment:
+            - SYNCOPE_DB_IP=192.168.95.168
+            - SYNCOPE_DB_PORT=3308
+            - SYNCOPE_DB_USER=root
+            - SYNCOPE_DB_PASSWORD=mysql
+            - SYNCOPE_DB_NAME=syncope
+        stdin_open: true
+        tty: true
+        depends_on:
+            - fluentd
+            - db
+        networks:
+            - nac_network
+
+    nac:
+        image: 10.74.65.35:9000/nac:1.5.0-int_1709
+        container_name: nac
+        restart: always
+        ports:
+            - "7515:6514"
+            - "7513:6513"
+            - "7524:6524"
+            - "7181:8181"
+            - "3434:3434"
+            - "5005:5005"
+        environment:
+            - CONTROLLER_DB_URL=jdbc:mariadb://192.168.95.168:3308/mdsdb
+            - DB_URL=jdbc:mariadb://192.168.95.168:3308/nacdb
+            - DB_USER=root
+            - DB_PASSWORD=mysql
+            - NC_NBI_IP=0.0.0.0
+            - NC_NBI_SSH_PORT=6514
+            #- JAVA_OPTS=-Xms1500m -Xmx3072m -XX:NewSize=1024m
+            - RMI_PORT=3434
+            - LOG_LEVEL=info
+            - DISABLE_AUTHENTICATION=true
+            - NAV_NAME=nac
+            - NAV_HOST=192.168.95.168
+            - LOGS_ES_URL=http://elasticsearch:9200
+            - ALARM_BRIDGE_ES_URL=http://elasticsearch:9200
+            - MDS_SEED_IPS=192.168.95.168:8181,192.168.95.168:28181,192.168.95.168:38181
+            - OPENTSDB_URL=http://192.168.95.168:4242
+            - KAFKA_BOOTSTRAP_SERVERS=192.168.95.168:9092
+            - KAFKA_ZOOKEEPER_SERVERS=192.168.95.168:2181
+            - SYNCOPE_URL=http://192.168.95.168:9080
+            - SYNCOPE_ADMIN_USER=admin
+            - SYNCOPE_ADMIN_PASSWORD=password
+            - PM_COLLECTION_MODEL_DB_IP=db
+            - PM_COLLECTION_MODEL_DB_PORT=3308
+            - PM_COLLECTION_MODEL_DB_USERNAME=root
+            - PM_COLLECTION_MODEL_DB_PASSWORD=mysql
+            - PM_INVENTORY_DB_IP=db
+            - PM_INVENTORY_DB_PORT=3308
+            - PM_INVENTORY_DB_USERNAME=root
+            - PM_INVENTORY_DB_PASSWORD=mysql
+            - NC_ENABLE_POST_EDIT_DS_VALIDATION_SUPPORT=false
+            - DEBUG=true
+            - LIVE_MESSAGE_TTL_INTERVAL=100000
+            - NC_LIVE_COLLECTION_TOPIC_PREFIX=NAC
+            - SNMP_LIVE_COLLECTION_TOPIC_PREFIX=NAC
+            - SHARED_FILE_SERVER_URL=http://localhost
+            - ENABLE_JACOCO_AGENT=true
+        stdin_open: true
+        tty: true
+        logging:
+            driver: fluentd
+            options:
+                fluentd-address: "0.0.0.0:24224"
+                tag: "docker.{{.ID}}"
+        depends_on:
+            - fluentd
+            - kafka
+            - db
+            - opentsdb
+        external_links:
+            - kafka
+            - fnms-fluentd
+            - fnms-mariadb
+        networks:
+            - nac_network
+
+    anv:
+        image: 10.74.65.35:9000/anv:1.5.0-int_1638
+        container_name: anv-docker
+        restart: always
+        ports:
+            - "6515:6514"
+            - "4335:4335"
+            - "9181:8181"
+            - "1269:1269"
+        environment:
+            - VIRTUAL_HOST=192.168.95.168
+            - VIRTUAL_PORT=8181
+            - CERT_NAME=default-cert
+            - DB_URL=jdbc:mariadb://192.168.95.168:3308/anv
+            - JACOCO_AGENT=true
+            - DB_USER=root
+            - DB_PASSWORD=mysql
+            - NC_NBI_IP=0.0.0.0
+            - NC_NBI_SSH_PORT=6514
+            - NAV_CALLHOME_TLS_PORT=4335
+            - NAV_HTTP_PORT=8181
+            - NAV_ENABLE_NEW_DEVICE_CAPS_CHECK=false
+            #- JAVA_OPTS=-Xms1500m -Xmx3072m -XX:NewSize=1024m
+            - RMI_PORT=1269
+            - LOG_LEVEL=info
+            - NAV_HOST=192.168.95.168
+            - NAV_ENABLE_DEVICE_SWMGMT=true
+            - NAV_CALLHOME_TLS_PRIV_KEY_PATH=/anv/anv-current/privatekey.pem
+            - NAV_CALLHOME_TLS_TRUST_CHAIN_PATH=/anv/anv-current/trustchain.crt
+            - NAV_CALLHOME_TLS_PRIV_KEY_CERT_PATH=/anv/anv-current/privatekeycert.crt
+            - KAFKA_BOOTSTRAP_SERVERS=192.168.95.168:9092
+            - KAFKA_ZOOKEEPER_SERVERS=192.168.95.168:2181
+            - NAV_STAGING_AREA=/root
+            - NAV_NAME=Test_ANV
+            - LOGS_ES_URL=http://192.168.95.168:9200
+            - SYNCOPE_URL=http://192.168.95.168:9080
+            - SYNCOPE_ADMIN_USER=admin
+            - SYNCOPE_ADMIN_PASSWORD=password
+            - ALARM_BRIDGE_ES_URL=http://elasticsearch:9200
+            - NC_ENABLE_POST_EDIT_DS_VALIDATION_SUPPORT=true
+            - NAV_SOFTWARE_OPERATIONS_RETRY_TIME=2
+            - DISABLE_AUTHENTICATION=false
+            - OPENTSDB_URL=http://192.168.95.168:4242
+        stdin_open: true
+        tty: true
+        logging:
+            driver: fluentd
+            options:
+                fluentd-address: "0.0.0.0:24224"
+                tag: "docker.{{.ID}}"
+        depends_on:
+            - kafka
+            - fluentd
+            - db
+            - opentsdb
+        networks:
+            - nac_network
+
+    nc-live-collector:
+        image: nc-live-collector
+        container_name: nc-live-collector
+        ports:
+            - "1298:1099"
+            - "5028:5005"
+            - "8187:8181"
+        environment:
+            - DB_URL=jdbc:mariadb://192.168.95.168:3308/nclivedb
+            - KAFKA_BOOTSTRAP_SERVERS=192.168.95.168:9092
+            - KAFKA_ZOOKEEPER_SERVERS=192.168.95.168:2181
+            - DB_USER=root
+            - DB_PASSWORD=mysql
+            - OPENTSDB_URL=http://192.168.95.168:4242
+            - KAFKA_TOPIC=Live_Collector
+            - NAV_NAME=Test_ANV
+            - NAV_CONNECTION_URL=http://192.168.95.168:9181
+            - NAV_CONNECTION_SSH_PORT=6515
+            - LOG_LEVEL=DEBUG
+            - DEBUG=true
+            - SYNCOPE_URL=http://192.168.95.168:9080
+            - SYNCOPE_ADMIN_USER=admin
+            - SYNCOPE_ADMIN_PASSWORD=password
+        stdin_open: true
+        tty: true
+        logging:
+           driver: fluentd
+           options:
+               fluentd-address: "0.0.0.0:24224"
+               tag: "nc-live-collector.{{.ID}}"
+        networks:
+            - nac_network
+        depends_on:
+            - kafka
+            - opentsdb
+            - fluentd
+            - db
+            - anv
+
+    health-calculator:
+        image: health-calculator
+        container_name: health-calculator
+        restart: always
+        ports:
+            - "1098:1099"
+            - "5008:5005"
+        environment:
+            - OPENTSDB_URL=http://192.168.95.168:4242
+            - DB_URL=jdbc:mariadb://192.168.95.168:3308/health
+            - DB_USER=root
+            - DB_PASSWORD=mysql
+            #- JAVA_OPTS=-Xms1500m -Xmx3072m -XX:NewSize=1024m
+            - KAFKA_BOOTSTRAP_SERVERS=192.168.95.168:9092
+            - KAFKA_ZOOKEEPER_SERVERS=192.168.95.168:2181
+            - LOG_LEVEL=info
+            - LOGS_ES_URL=http://192.168.95.168:9200
+            - ALARM_BRIDGE_ES_URL=http://192.168.95.168:9200
+            - DB_NAME=health
+            - NAV_NAME=Test_NAV
+            - HI_INTERVAL=3
+            - PM_URL=http://192.168.95.168:7181
+            - DEBUG=true
+        stdin_open: true
+        tty: true
+        logging:
+            driver: fluentd
+            options:
+                fluentd-address: "0.0.0.0:24224"
+                tag: "docker.{{.ID}}"
+        networks:
+            - nac_network
+        depends_on:
+            - nac
+
+    alarm-es-bridge:
+        image: alarm-es-bridge
+        container_name: alarm-es-bridge
+        restart: always
+        ports:
+            - "6006:5006"
+        environment:
+            - KARAF_DEBUG=true
+            - DB_URL=jdbc:mariadb://192.168.95.168:3308/alarmesbridge
+            - DB_USER=root
+            - DB_PASSWORD=mysql
+            - NC_NBI_IP=0.0.0.0
+            - NC_NBI_SSH_PORT=6514
+            - NC_NBI_TLS_PORT=6513
+            - NC_NBI_TLS_PRIV_KEY_PATH=/anv/anv-1.0.0-SNAPSHOT/etc/PK.pem.chomp
+            - NC_NBI_TLS_PRIV_KEY_CERT_PATH=dummy1.crt
+            - NC_NBI_TLS_TRUST_CHAIN_PATH=dummy2.crt
+            - DB_NAME=alarm_es_bridge
+            - BRIDGE_ES_URL=http://192.168.95.168:9200
+            - OPENTSDB_URL=http://192.168.95.168:4242
+            - ALARM_TOPICS=Test_NAV_ALARM,135.249.45.78_ALARM
+            - BRIDGE_KAFKA_BOOTSTRAP_SERVERS=192.168.95.168:9092
+            - LOG_LEVEL=INFO
+        depends_on:
+            - fluentd
+        stdin_open: true
+        tty: true
+        logging:
+            driver: fluentd
+            options:
+                fluentd-address: "0.0.0.0:24224"
+                tag: "docker.{{.ID}}"
+        networks:
+            - nac_network
